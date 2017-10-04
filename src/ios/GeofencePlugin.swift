@@ -42,6 +42,13 @@ func log(_ messages: [String]) {
             name: NSNotification.Name(rawValue: "handleTransition"),
             object: nil
         )
+
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(GeofencePlugin.didChangeAuth(_:)),
+            name: NSNotification.Name(rawValue: "authChange"),
+            object: nil
+        )
     }
 
     func initialize(_ command: CDVInvokedUrlCommand) {
@@ -147,6 +154,13 @@ func log(_ messages: [String]) {
 
             evaluateJs(js)
         }
+    }
+
+    func didChangeAuth(_ notification: Notification){
+        log("didChangeAuth")
+        let result = notification.object as! Bool ? "true" : "false";
+        let js = "setTimeout('geofence.onAuthChanged(" + result + ")',0)"
+        evaluateJs(js)
     }
 
     func didReceiveLocalNotification (_ notification: Notification) {
@@ -385,6 +399,18 @@ class GeoNotificationManager : NSObject, CLLocationManagerDelegate {
 
     func locationManager(_ manager: CLLocationManager, monitoringDidFailFor region: CLRegion?, withError error: Error) {
         log("Monitoring region " + region!.identifier + " failed \(error)" )
+    }
+
+    func locationManager(_ manager: CLLocationManager, didChangeAuthorization status: CLAuthorizationStatus) {
+        if (status == CLAuthorizationStatus.authorizedAlways){
+            if (CLLocationManager.isMonitoringAvailable(for: CLRegion.self) && CLLocationManager.locationServicesEnabled()) {
+                NotificationCenter.default.post(name: Notification.Name(rawValue: "authChange"), object: true)
+            }else{
+                NotificationCenter.default.post(name: Notification.Name(rawValue: "authChange"), object: false)
+            }
+        }else if (status != CLAuthorizationStatus.notDetermined){
+            NotificationCenter.default.post(name: Notification.Name(rawValue: "authChange"), object: false)
+        }
     }
 
     func handleTransition(_ region: CLRegion!, transitionType: Int) {

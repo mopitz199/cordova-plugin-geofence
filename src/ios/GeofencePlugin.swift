@@ -281,6 +281,9 @@ class GeoNotificationManager : NSObject, CLLocationManagerDelegate {
         //store
         store.addOrUpdate(geoNotification)
         locationManager.startMonitoring(for: region)
+        DispatchQueue.main.asyncAfter(deadline: .now() + 3){
+          self.locationManager.requestState(for: region)
+        }
     }
 
     func checkRequirements() -> (Bool, [String], [String]) {
@@ -383,6 +386,7 @@ class GeoNotificationManager : NSObject, CLLocationManagerDelegate {
         handleTransition(region, transitionType: 2)
     }
 
+
     func locationManager(_ manager: CLLocationManager, didStartMonitoringFor region: CLRegion) {
         if region is CLCircularRegion {
             let lat = (region as! CLCircularRegion).center.latitude
@@ -395,6 +399,9 @@ class GeoNotificationManager : NSObject, CLLocationManagerDelegate {
 
     func locationManager(_ manager: CLLocationManager, didDetermineState state: CLRegionState, for region: CLRegion) {
         log("State for region " + region.identifier)
+        if (state == CLRegionState.inside){
+            handleTransition(region, transitionType: 1)
+        }
     }
 
     func locationManager(_ manager: CLLocationManager, monitoringDidFailFor region: CLRegion?, withError error: Error) {

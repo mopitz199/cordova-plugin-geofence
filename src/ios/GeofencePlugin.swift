@@ -5,7 +5,6 @@
 //  Created by tomasz on 07/10/14.
 //
 //
-
 import Foundation
 import AudioToolbox
 import WebKit
@@ -43,8 +42,18 @@ func log(_ messages: [String]) {
             name: NSNotification.Name(rawValue: "handleTransition"),
             object: nil
         )
+
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(GeofencePlugin.didChangeAuth(_:)),
+            name: NSNotification.Name(rawValue: "authChange"),
+            object: nil
+        )
     }
     
+
+        
+
     func initialize(_ command: CDVInvokedUrlCommand) {
         log("Plugin initialization")
         //let faker = GeofenceFaker(manager: geoNotificationManager)
@@ -151,7 +160,14 @@ func log(_ messages: [String]) {
             evaluateJs(js)
         }
     }
-    
+
+    func didChangeAuth(_ notification: Notification){
+        log("didChangeAuth")
+        let result = notification.object as! Bool ? "true" : "false";
+        let js = "setTimeout('geofence.onAuthChanged(" + result + ")',0)"
+        evaluateJs(js)
+    }
+
     func didReceiveLocalNotification (_ notification: Notification) {
         log("didReceiveLocalNotification")
         if UIApplication.shared.applicationState != UIApplicationState.active {
@@ -267,10 +283,58 @@ class GeoNotificationManager : NSObject, CLLocationManagerDelegate {
         }
         region.notifyOnEntry = 0 != transitionType & 1
         region.notifyOnExit = 0 != transitionType & 2
-        
+
         //store
         store.addOrUpdate(geoNotification)
         locationManager.startMonitoring(for: region)
+        DispatchQueue.main.asyncAfter(deadline: .now() + 3){
+          self.locationManager.requestState(for: region)
+        }
+    }
+
+    func checkRequirements() -> (Bool, [String], [String]) {
+        var errors = [String]()
+        var warnings = [String]()
+
+        if (!CLLocationManager.isMonitoringAvailable(for: CLRegion.self)) {
+            errors.append("Geofencing not available")
+        }
+
+        if (!CLLocationManager.locationServicesEnabled()) {
+            errors.append("Error: Locationservices not enabled")
+        }
+
+        let authStatus = CLLocationManager.authorizationStatus()
+
+        if (authStatus != CLAuthorizationStatus.authorizedAlways) {
+            errors.append("Warning: Location always permissions not granted")
+        }
+
+        if (iOS8) {
+            if let notificationSettings = UIApplication.shared.currentUserNotificationSettings {
+                if notificationSettings.types == UIUserNotificationType() {
+                    errors.append("Error: notification permission missing")
+                } else {
+                    if !notificationSettings.types.contains(.sound) {
+                        warnings.append("Warning: notification settings - sound permission missing")
+                    }
+
+                    if !notificationSettings.types.contains(.alert) {
+                        warnings.append("Warning: notification settings - alert permission missing")
+                    }
+
+                    if !notificationSettings.types.contains(.badge) {
+                        warnings.append("Warning: notification settings - badge permission missing")
+                    }
+                }
+            } else {
+                errors.append("Error: notification permission missing")
+            }
+        }
+
+        let ok = (errors.count == 0)
+
+        return (ok, warnings, errors)
     }
     
     func checkRequirements() -> (Bool, [String], [String]) {
@@ -379,19 +443,34 @@ class GeoNotificationManager : NSObject, CLLocationManagerDelegate {
             let lat = (region as! CLCircularRegion).center.latitude
             let lng = (region as! CLCircularRegion).center.longitude
             let radius = (region as! CLCircularRegion).radius
-            
+
             log("Starting monitoring for region \(region) lat \(lat) lng \(lng) of radius \(radius)")
         }
     }
-    
+
     func locationManager(_ manager: CLLocationManager, didDetermineState state: CLRegionState, for region: CLRegion) {
         log("State for region " + region.identifier)
+        if (state == CLRegionState.inside){
+            handleTransition(region, transitionType: 1)
+        }
     }
-    
+
     func locationManager(_ manager: CLLocationManager, monitoringDidFailFor region: CLRegion?, withError error: Error) {
         log("Monitoring region " + region!.identifier + " failed \(error)" )
     }
-    
+
+    func locationManager(_ manager: CLLocationManager, didChangeAuthorization status: CLAuthorizationStatus) {
+        if (status == CLAuthorizationStatus.authorizedAlways){
+            if (CLLocationManager.isMonitoringAvailable(for: CLRegion.self) && CLLocationManager.locationServicesEnabled()) {
+                NotificationCenter.default.post(name: Notification.Name(rawValue: "authChange"), object: true)
+            }else{
+                NotificationCenter.default.post(name: Notification.Name(rawValue: "authChange"), object: false)
+            }
+        }else if (status != CLAuthorizationStatus.notDetermined){
+            NotificationCenter.default.post(name: Notification.Name(rawValue: "authChange"), object: false)
+        }
+    }
+
     func handleTransition(_ region: CLRegion!, transitionType: Int) {
         if var geoNotification = store.findById(region.identifier) {
             geoNotification["transitionType"].int = transitionType
@@ -457,30 +536,30 @@ class GeoNotificationStore {
             add(geoNotification)
         }
     }
-    
+
     func add(_ geoNotification: JSON) {
         let id = geoNotification["id"].stringValue
         let err = SD.executeChange("INSERT INTO GeoNotifications (Id, Data) VALUES(?, ?)",
-                                   withArgs: [id as AnyObject, geoNotification.description as AnyObject])
-        
+            withArgs: [id as AnyObject, geoNotification.description as AnyObject])
+
         if err != nil {
             log("Error while adding \(id) GeoNotification: \(err)")
         }
     }
-    
+
     func update(_ geoNotification: JSON) {
         let id = geoNotification["id"].stringValue
         let err = SD.executeChange("UPDATE GeoNotifications SET Data = ? WHERE Id = ?",
-                                   withArgs: [geoNotification.description as AnyObject, id as AnyObject])
-        
+            withArgs: [geoNotification.description as AnyObject, id as AnyObject])
+
         if err != nil {
             log("Error while adding \(id) GeoNotification: \(err)")
         }
     }
-    
+
     func findById(_ id: String) -> JSON? {
         let (resultSet, err) = SD.executeQuery("SELECT * FROM GeoNotifications WHERE Id = ?", withArgs: [id as AnyObject])
-        
+
         if err != nil {
             //there was an error during the query, handle it here
             log("Error while fetching \(id) GeoNotification table: \(err)")
@@ -513,10 +592,10 @@ class GeoNotificationStore {
             return results
         }
     }
-    
+
     func remove(_ id: String) {
         let err = SD.executeChange("DELETE FROM GeoNotifications WHERE Id = ?", withArgs: [id as AnyObject])
-        
+
         if err != nil {
             log("Error while removing \(id) GeoNotification: \(err)")
         }

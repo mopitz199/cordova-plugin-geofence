@@ -98,6 +98,16 @@ module.exports = {
     getWatched: function (success, error) {
         return execPromise(success, error, "GeofencePlugin", "getWatched", []);
     },
+
+    /**
+    * iOS Only: called when user authorize to get position
+    *
+    * @name result
+    * @param {Bool} whether if it's authorized or not
+    */
+    onAuthChanged: function(result){
+        console.log("geofence auth changed to ", result);
+    },
     /**
      * Called when app is opened via Notification bar
      *
